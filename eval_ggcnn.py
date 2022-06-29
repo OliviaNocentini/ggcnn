@@ -4,7 +4,7 @@ import logging
 import torch.utils.data
 
 from models.common import post_process_output
-from utils.dataset_processing import evaluation, grasp
+from utils.dataset_processing import evaluation, grasp, line
 from utils.data import get_dataset
 
 logging.basicConfig(level=logging.INFO)
@@ -19,16 +19,17 @@ def parse_args():
     # Dataset & Data & Training
     parser.add_argument('--dataset', type=str, help='Dataset Name ("cornell" or "jaquard")')
     parser.add_argument('--dataset-path', type=str, help='Path to dataset')
-    parser.add_argument('--use-depth', type=int, default=1, help='Use Depth image for evaluation (1/0)')
-    parser.add_argument('--use-rgb', type=int, default=0, help='Use RGB image for evaluation (0/1)')
+    parser.add_argument('--use-depth', type=int, default=0, help='Use Depth image for evaluation (1/0)')
+    parser.add_argument('--use-rgb', type=int, default=1, help='Use RGB image for evaluation (0/1)')
     parser.add_argument('--augment', action='store_true', help='Whether data augmentation should be applied')
-    parser.add_argument('--split', type=float, default=0.9, help='Fraction of data for training (remainder is validation)')
+    parser.add_argument('--split', type=float, default=0, help='Fraction of data for training (remainder is validation)')
     parser.add_argument('--ds-rotate', type=float, default=0.0,
                         help='Shift the start point of the dataset to use a different test/train split')
     parser.add_argument('--num-workers', type=int, default=8, help='Dataset workers')
 
     parser.add_argument('--n-grasps', type=int, default=1, help='Number of grasps to consider per image')
     parser.add_argument('--iou-eval', action='store_true', help='Compute success based on IoU metric.')
+    parser.add_argument('--line-eval', action='store_true', help='Compute success based on line metric.')
     parser.add_argument('--jacquard-output', action='store_true', help='Jacquard-dataset style output')
     parser.add_argument('--vis', action='store_true', help='Visualise the network output')
 
@@ -47,7 +48,7 @@ if __name__ == '__main__':
 
     # Load Network
     net = torch.load(args.network)
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:0")               ########################## switch between gpu and cpu.. original  = "cuda:0"
 
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
@@ -59,11 +60,13 @@ if __name__ == '__main__':
         test_dataset,
         batch_size=1,
         shuffle=False,
-        num_workers=args.num_workers
+        num_workers= args.num_workers
     )
     logging.info('Done')
+    print("dataset_length",len(test_data))
 
     results = {'correct': 0, 'failed': 0}
+    results_line = {'correct': 0, 'failed': 0}
 
     if args.jacquard_output:
         jo_fn = args.network + '_jacquard_output.txt'
@@ -85,11 +88,23 @@ if __name__ == '__main__':
                                                    no_grasps=args.n_grasps,
                                                    grasp_width=width_img,
                                                    )
+                
                 if s:
                     results['correct'] += 1
                 else:
                     results['failed'] += 1
-
+            
+            if args.line_eval:
+            
+                s = evaluation.calculate_line_intersection_match(q_img, ang_img,test_data.dataset.get_line(didx, rot, zoom),
+                                                   no_grasps=args.n_grasps,
+                                                   grasp_width=width_img,
+                                                   )
+                if s:
+                    results_line['correct'] += 1
+                else:
+                    results_line['failed'] += 1
+            
             if args.jacquard_output:
                 grasps = grasp.detect_grasps(q_img, ang_img, width_img=width_img, no_grasps=1)
                 with open(jo_fn, 'a') as f:
@@ -99,13 +114,26 @@ if __name__ == '__main__':
 
             if args.vis:
                 evaluation.plot_output(test_data.dataset.get_rgb(didx, rot, zoom, normalise=False),
-                                       test_data.dataset.get_depth(didx, rot, zoom), q_img,
+                                       #test_data.dataset.get_depth(didx, rot, zoom),
+                                       #test_data.dataset.get_gtbb(didx, rot, zoom),
+				       #test_data.dataset.get_line(didx, rot, zoom),
+                                       q_img,
                                        ang_img, no_grasps=args.n_grasps, grasp_width_img=width_img)
-
+    
     if args.iou_eval:
         logging.info('IOU Results: %d/%d = %f' % (results['correct'],
                               results['correct'] + results['failed'],
                               results['correct'] / (results['correct'] + results['failed'])))
+
+    if args.line_eval:
+        logging.info('Line Results: %d/%d = %f' % (results_line['correct'],
+                              results_line['correct'] + results_line['failed'],
+                              results_line['correct'] / (results_line['correct'] + results_line['failed'])))
+
+    
+
+        ############################  Added by zain to test evaluation##########3
+
 
     if args.jacquard_output:
         logging.info('Jacquard output saved to {}'.format(jo_fn))
